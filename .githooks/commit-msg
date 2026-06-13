@@ -1,0 +1,74 @@
+#!/bin/bash
+
+COMMIT_MSG_FILE="$1"
+
+# Strip comment lines and carriage returns
+msg=$(sed '/^#/d; s/\r//' "$COMMIT_MSG_FILE")
+
+# Parse into array
+lines=()
+while IFS= read -r line; do
+    lines+=("$line")
+done <<< "$msg"
+
+# Remove trailing blank lines
+while [[ ${#lines[@]} -gt 0 && -z "${lines[${#lines[@]}-1]}" ]]; do
+    lines=("${lines[@]:0:${#lines[@]}-1}")
+done
+
+die() {
+    echo "commit-msg: ERROR — $1" >&2
+    echo "" >&2
+    cat >&2 <<'USAGE'
+Required format:
+  <kind>: <summary>
+
+  [<detail>]
+
+  Task: <task_id>
+
+Rules:
+  kind        : Ftr | Fix | Eta
+  first line  : ASCII only, <= 50 chars, summary starts with uppercase
+  detail lines: ASCII only, <= 50 chars each (optional)
+  blank lines : blank line after first line, and before "Task:"
+  task_id     : integer
+USAGE
+    exit 1
+}
+
+is_ascii() {
+    ! printf '%s' "$1" | LC_ALL=C grep -q '[^[:print:][:blank:]]'
+}
+
+n=${#lines[@]}
+
+[[ $n -ge 3 ]] || die "Message needs at least 3 lines (header + blank + Task)"
+
+# Line 1: <kind>: <Summary...>
+first="${lines[0]}"
+is_ascii "$first"        || die "First line must be ASCII only"
+[[ ${#first} -le 50 ]]  || die "First line > 50 chars (${#first}): '$first'"
+[[ "$first" =~ ^(Ftr|Fix|Eta):\ [A-Z] ]] \
+                         || die "First line must match '<kind>: <Summary>' — kind is Ftr|Fix|Eta, summary starts uppercase"
+
+# Line 2: blank
+[[ -z "${lines[1]}" ]]  || die "Line 2 must be blank"
+
+# Last line: Task: <integer>
+last="${lines[$((n-1))]}"
+[[ "$last" =~ ^Task:\ [0-9]+$ ]] \
+                         || die "Last line must be 'Task: <integer>' (got '$last')"
+
+# Line before Task: must be blank
+[[ -z "${lines[$((n-2))]}" ]] \
+                         || die "Line before 'Task:' must be blank"
+
+# Detail lines: indices 2..n-3 (empty range = no detail, which is fine)
+for ((i = 2; i <= n - 3; i++)); do
+    line="${lines[$i]}"
+    is_ascii "$line"     || die "Detail line $((i+1)): must be ASCII only"
+    [[ ${#line} -le 50 ]] || die "Detail line $((i+1)): > 50 chars (${#line}): '$line'"
+done
+
+exit 0

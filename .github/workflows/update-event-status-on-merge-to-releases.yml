@@ -1,0 +1,42 @@
+name: Update event status on merge to releases
+
+on:
+  pull_request:
+    branches:
+      - releases
+    types: [closed]
+
+jobs:
+  update-event-status:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update event status to released
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          TOOL_API_KEY: ${{ secrets.TOOL_API_KEY }}
+          TOOL_EVENT_API_URL: ${{ secrets.TOOL_EVENT_API_URL }}
+          EVENT_STATUS_RELEASE_ID: ${{ secrets.EVENT_STATUS_RELEASE_ID }}
+        run: |
+          event_id=$(echo "$PR_BODY" \
+            | grep -o 'Event: [0-9][0-9]*' \
+            | grep -o '[0-9][0-9]*' \
+            | head -1)
+
+          if [[ -z "$event_id" ]]; then
+            echo "::error::No 'Event: <event_id>' found in PR body"
+            exit 1
+          fi
+
+          http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X PATCH "${TOOL_EVENT_API_URL}${event_id}/" \
+            -H "X-API-Key: $TOOL_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\": $EVENT_STATUS_RELEASE_ID}")
+
+          if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            echo "Event $event_id: status updated to released"
+          else
+            echo "::error::Failed to update Event $event_id status (HTTP $http_code)"
+            exit 1
+          fi
