@@ -1,0 +1,6 @@
+[submodule "emonotate-backend"]
+	path = emonotate-backend
+	url = https://github.com/tombee-studio/emonotate-backend
+[submodule "emonotate-app"]
+	path = emonotate-app
+	url = https://github.com/tombee-studio/emonotate-app
