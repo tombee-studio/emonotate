@@ -9,17 +9,17 @@ variable "env" {
 }
 
 variable "vpc_id" {
-  description = "VPC ID to deploy the RDS instance into"
+  description = "VPC ID to deploy Aurora into"
   type        = string
 }
 
 variable "private_subnet_ids" {
-  description = "Private subnet IDs for the DB subnet group"
+  description = "Private subnet IDs for the DB subnet group (minimum 2)"
   type        = list(string)
 }
 
 variable "rds_security_group_id" {
-  description = "Security group ID to attach to the RDS instance"
+  description = "Security group ID to attach to the Aurora cluster"
   type        = string
 }
 
@@ -41,26 +41,26 @@ variable "db_password" {
   sensitive   = true
 }
 
-variable "instance_class" {
-  description = "RDS instance class"
-  type        = string
-  default     = "db.t3.micro"
-}
-
-variable "allocated_storage" {
-  description = "Storage size in GiB"
+variable "min_capacity" {
+  description = "Minimum Aurora capacity units (ACUs)"
   type        = number
-  default     = 20
+  default     = 1
 }
 
-variable "multi_az" {
-  description = "Enable Multi-AZ deployment"
-  type        = bool
-  default     = false
+variable "max_capacity" {
+  description = "Maximum Aurora capacity units (ACUs)"
+  type        = number
+  default     = 4
 }
 
-variable "deletion_protection" {
-  description = "Protect the RDS instance from accidental deletion"
+variable "auto_pause" {
+  description = "Enable auto-pause when idle (saves cost in dev)"
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "seconds_until_auto_pause" {
+  description = "Seconds of inactivity before auto-pause"
+  type        = number
+  default     = 300
 }
