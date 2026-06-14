@@ -88,6 +88,7 @@ jobs:
         env:
           REACT_APP_API_URL: ${{ secrets.DEV_API_ENDPOINT }}
           REACT_APP_ENV: dev
+          NODE_OPTIONS: --openssl-legacy-provider
         run: npm run build
 
       - name: Deploy to S3
