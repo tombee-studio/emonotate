@@ -69,6 +69,7 @@ module "api_gateway_lambda" {
   db_password              = var.db_password
   django_secret_key        = var.django_secret_key
   media_bucket_name        = module.s3_cloudfront.media_bucket_name
+  app_base                 = var.cloudfront_domain
   lambda_memory_mb         = 512
   lambda_timeout_sec       = 30
 
