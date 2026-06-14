@@ -31,26 +31,12 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc" {
 
 data "aws_iam_policy_document" "lambda_perms" {
   statement {
-    sid     = "SecretsManager"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.django_secret_name}*"
-    ]
-  }
-
-  statement {
     sid     = "S3Media"
     actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
     resources = [
       "arn:aws:s3:::${var.media_bucket_name}",
       "arn:aws:s3:::${var.media_bucket_name}/*"
     ]
-  }
-
-  statement {
-    sid     = "ECR"
-    actions = ["ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"]
-    resources = ["*"]
   }
 }
 
@@ -78,12 +64,16 @@ resource "aws_lambda_function" "backend" {
 
   environment {
     variables = {
-      DJANGO_SETTINGS_MODULE = "backend.settings.aws"
-      DJANGO_SECRET_NAME     = var.django_secret_name
+      DJANGO_SETTINGS_MODULE  = "backend.settings.aws"
+      DJANGO_SECRET_KEY       = var.django_secret_key
+      DB_HOST                 = var.db_host
+      DB_NAME                 = var.db_name
+      DB_USER                 = var.db_user
+      DB_PASSWORD             = var.db_password
+      DB_PORT                 = "5432"
       AWS_STORAGE_BUCKET_NAME = var.media_bucket_name
-      AWS_REGION             = var.aws_region
-      API_BASE               = var.api_base
-      APP_BASE               = var.app_base
+      AWS_REGION              = var.aws_region
+      APP_BASE                = var.app_base
     }
   }
 
