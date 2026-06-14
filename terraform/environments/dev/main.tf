@@ -22,11 +22,9 @@ module "rds" {
   vpc_id                   = module.network.vpc_id
   private_subnet_ids       = module.network.private_subnet_ids
   rds_security_group_id    = module.network.rds_security_group_id
-  db_password              = var.db_password
-  min_capacity             = 1
-  max_capacity             = 2
-  auto_pause               = true
-  seconds_until_auto_pause = 300
+  db_password  = var.db_password
+  min_capacity = 0
+  max_capacity = 1
 }
 
 module "s3_cloudfront" {

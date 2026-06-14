@@ -42,25 +42,13 @@ variable "db_password" {
 }
 
 variable "min_capacity" {
-  description = "Minimum Aurora capacity units (ACUs)"
+  description = "Minimum Aurora Serverless v2 ACUs (0 = scale to zero)"
   type        = number
-  default     = 1
+  default     = 0
 }
 
 variable "max_capacity" {
-  description = "Maximum Aurora capacity units (ACUs)"
+  description = "Maximum Aurora Serverless v2 ACUs"
   type        = number
-  default     = 4
-}
-
-variable "auto_pause" {
-  description = "Enable auto-pause when idle (saves cost in dev)"
-  type        = bool
-  default     = true
-}
-
-variable "seconds_until_auto_pause" {
-  description = "Seconds of inactivity before auto-pause"
-  type        = number
-  default     = 300
+  default     = 1
 }
