@@ -83,6 +83,12 @@ data "aws_iam_policy_document" "ci_perms" {
   }
 
   statement {
+    sid     = "CloudFrontList"
+    actions = ["cloudfront:ListDistributions"]
+    resources = ["*"]
+  }
+
+  statement {
     sid = "CloudFrontInvalidate"
     actions = ["cloudfront:CreateInvalidation"]
     resources = var.cloudfront_distribution_arns
