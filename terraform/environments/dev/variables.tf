@@ -10,3 +10,9 @@ variable "django_secret_key" {
   sensitive   = true
 }
 
+variable "cloudfront_domain" {
+  description = "CloudFront domain for CSRF_TRUSTED_ORIGINS (set after initial deploy)"
+  type        = string
+  default     = ""
+}
+
