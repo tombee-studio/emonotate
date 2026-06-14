@@ -28,9 +28,10 @@ module "rds" {
 }
 
 module "s3_cloudfront" {
-  source  = "../../modules/s3_cloudfront"
-  project = local.project
-  env     = local.env
+  source          = "../../modules/s3_cloudfront"
+  project         = local.project
+  env             = local.env
+  api_gateway_url = module.api_gateway_lambda.api_endpoint
 }
 
 module "api_gateway_lambda" {

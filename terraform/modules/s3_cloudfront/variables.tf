@@ -19,3 +19,9 @@ variable "acm_certificate_arn" {
   type        = string
   default     = ""
 }
+
+variable "api_gateway_url" {
+  description = "API Gateway HTTP API endpoint URL (without trailing slash)"
+  type        = string
+  default     = ""
+}
