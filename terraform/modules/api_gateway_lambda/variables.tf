@@ -62,12 +62,6 @@ variable "media_bucket_name" {
   type        = string
 }
 
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "ap-northeast-1"
-}
-
 variable "app_base" {
   description = "Frontend base domain (without protocol)"
   type        = string

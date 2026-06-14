@@ -72,7 +72,6 @@ resource "aws_lambda_function" "backend" {
       DB_PASSWORD             = var.db_password
       DB_PORT                 = "5432"
       AWS_STORAGE_BUCKET_NAME = var.media_bucket_name
-      AWS_REGION              = var.aws_region
       APP_BASE                = var.app_base
     }
   }
