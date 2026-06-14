@@ -76,6 +76,11 @@ resource "aws_lambda_function" "backend" {
     }
   }
 
+  # CI/CD updates image_uri after push; ignore Terraform drift.
+  lifecycle {
+    ignore_changes = [image_uri]
+  }
+
   tags = {
     Name    = "${local.name_prefix}-backend"
     Project = var.project
