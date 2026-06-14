@@ -71,27 +71,13 @@ resource "aws_cloudfront_distribution" "frontend" {
     response_page_path = "/index.html"
   }
 
-  dynamic "aliases" {
-    for_each = var.frontend_domain != "" ? [var.frontend_domain] : []
-    content {
-      aliases = [aliases.value]
-    }
-  }
+  aliases = var.frontend_domain != "" ? [var.frontend_domain] : []
 
-  dynamic "viewer_certificate" {
-    for_each = var.acm_certificate_arn != "" ? [1] : []
-    content {
-      acm_certificate_arn      = var.acm_certificate_arn
-      ssl_support_method       = "sni-only"
-      minimum_protocol_version = "TLSv1.2_2021"
-    }
-  }
-
-  dynamic "viewer_certificate" {
-    for_each = var.acm_certificate_arn == "" ? [1] : []
-    content {
-      cloudfront_default_certificate = true
-    }
+  viewer_certificate {
+    acm_certificate_arn            = var.acm_certificate_arn != "" ? var.acm_certificate_arn : null
+    cloudfront_default_certificate = var.acm_certificate_arn == ""
+    ssl_support_method             = var.acm_certificate_arn != "" ? "sni-only" : null
+    minimum_protocol_version       = var.acm_certificate_arn != "" ? "TLSv1.2_2021" : "TLSv1"
   }
 
   restrictions {
