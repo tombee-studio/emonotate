@@ -16,16 +16,17 @@ module "ecr" {
 }
 
 module "rds" {
-  source                = "../../modules/rds"
-  project               = local.project
-  env                   = local.env
-  vpc_id                = module.network.vpc_id
-  private_subnet_ids    = module.network.private_subnet_ids
-  rds_security_group_id = module.network.rds_security_group_id
-  db_password           = var.db_password
-  instance_class        = "db.t3.micro"
-  multi_az              = false
-  deletion_protection   = false
+  source                   = "../../modules/rds"
+  project                  = local.project
+  env                      = local.env
+  vpc_id                   = module.network.vpc_id
+  private_subnet_ids       = module.network.private_subnet_ids
+  rds_security_group_id    = module.network.rds_security_group_id
+  db_password              = var.db_password
+  min_capacity             = 1
+  max_capacity             = 2
+  auto_pause               = true
+  seconds_until_auto_pause = 300
 }
 
 module "s3_cloudfront" {
@@ -42,8 +43,14 @@ module "api_gateway_lambda" {
   vpc_id                   = module.network.vpc_id
   private_subnet_ids       = module.network.private_subnet_ids
   lambda_security_group_id = module.network.lambda_security_group_id
-  django_secret_name       = "emonotate-dev-django"
+  db_host                  = module.rds.db_host
+  db_name                  = module.rds.db_name
+  db_user                  = module.rds.db_username
+  db_password              = var.db_password
+  django_secret_key        = var.django_secret_key
   media_bucket_name        = module.s3_cloudfront.media_bucket_name
+  lambda_memory_mb         = 512
+  lambda_timeout_sec       = 30
 }
 
 module "iam_oidc" {
