@@ -33,11 +33,32 @@ module "s3_cloudfront" {
   env     = local.env
 }
 
+resource "null_resource" "push_bootstrap_image" {
+  triggers = {
+    ecr_url = module.ecr.repository_url
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOF
+      aws ecr get-login-password --region ap-northeast-1 \
+        | docker login --username AWS --password-stdin ${module.ecr.repository_url}
+      mkdir -p /tmp/bootstrap-lambda
+      printf 'FROM public.ecr.aws/lambda/python:3.9\nCMD ["lambda_handler.handler"]\n' \
+        > /tmp/bootstrap-lambda/Dockerfile
+      docker buildx build --platform linux/amd64 --provenance=false \
+        -t ${module.ecr.repository_url}:bootstrap \
+        --push /tmp/bootstrap-lambda/
+    EOF
+  }
+
+  depends_on = [module.ecr]
+}
+
 module "api_gateway_lambda" {
   source                   = "../../modules/api_gateway_lambda"
   project                  = local.project
   env                      = local.env
-  ecr_image_uri            = var.ecr_image_uri
+  ecr_image_uri            = "${module.ecr.repository_url}:bootstrap"
   vpc_id                   = module.network.vpc_id
   private_subnet_ids       = module.network.private_subnet_ids
   lambda_security_group_id = module.network.lambda_security_group_id
@@ -49,6 +70,8 @@ module "api_gateway_lambda" {
   media_bucket_name        = module.s3_cloudfront.media_bucket_name
   lambda_memory_mb         = 512
   lambda_timeout_sec       = 30
+
+  depends_on = [null_resource.push_bootstrap_image]
 }
 
 module "iam_oidc" {
