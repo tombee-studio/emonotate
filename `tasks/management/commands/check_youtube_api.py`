@@ -1,0 +1,167 @@
+"""
+Management command to check YouTube Data API connectivity.
+Usage: python manage.py check_youtube_api
+"""
+from django.core.management.base import BaseCommand
+from django.conf import settings
+
+
+class Command(BaseCommand):
+    help = 'Check YouTube Data API connectivity and configuration'
+
+    def handle(self, *args, **options):
+        self.stdout.write('=== YouTube Data API 診断ツール ===\n')
+
+        # 1. Check API key configuration
+        self._check_api_key()
+
+        # 2. Check required packages
+        self._check_packages()
+
+        # 3. Test API connection
+        self._test_api_connection()
+
+    def _check_api_key(self):
+        self.stdout.write('\n[1] APIキー設定の確認...')
+        
+        api_key = getattr(settings, 'YOUTUBE_API_KEY', None)
+        
+        if not api_key:
+            self.stdout.write(
+                self.style.ERROR(
+                    '  ✗ YOUTUBE_API_KEY が設定されていません\n'
+                    '  → .env ファイルまたは環境変数に YOUTUBE_API_KEY を設定してください'
+                )
+            )
+            return False
+        
+        if api_key == 'your-api-key-here' or api_key == 'dummy':
+            self.stdout.write(
+                self.style.ERROR(
+                    '  ✗ YOUTUBE_API_KEY がプレースホルダーのままです\n'
+                    '  → 実際のAPIキーを設定してください'
+                )
+            )
+            return False
+        
+        # Mask the API key for security
+        masked_key = api_key[:8] + '...' + api_key[-4:] if len(api_key) > 12 else '****'
+        self.stdout.write(
+            self.style.SUCCESS(f'  ✓ YOUTUBE_API_KEY が設定されています: {masked_key}')
+        )
+        return True
+
+    def _check_packages(self):
+        self.stdout.write('\n[2] 必要なパッケージの確認...')
+        
+        packages = [
+            ('googleapiclient', 'google-api-python-client'),
+            ('google.auth', 'google-auth'),
+            ('google.auth.transport.requests', 'google-auth-httplib2'),
+        ]
+        
+        all_ok = True
+        for module_name, package_name in packages:
+            try:
+                __import__(module_name)
+                self.stdout.write(
+                    self.style.SUCCESS(f'  ✓ {package_name} がインストールされています')
+                )
+            except ImportError:
+                self.stdout.write(
+                    self.style.ERROR(
+                        f'  ✗ {package_name} がインストールされていません\n'
+                        f'  → pip install {package_name} を実行してください'
+                    )
+                )
+                all_ok = False
+        
+        return all_ok
+
+    def _test_api_connection(self):
+        self.stdout.write('\n[3] API接続テスト...')
+        
+        api_key = getattr(settings, 'YOUTUBE_API_KEY', None)
+        if not api_key:
+            self.stdout.write(
+                self.style.WARNING('  ⚠ APIキーが未設定のため接続テストをスキップします')
+            )
+            return
+
+        try:
+            from googleapiclient.discovery import build
+            from googleapiclient.errors import HttpError
+            
+            self.stdout.write('  接続中...')
+            
+            youtube = build(
+                'youtube',
+                'v3',
+                developerKey=api_key
+            )
+            
+            # Simple test request
+            response = youtube.search().list(
+                q='test',
+                part='snippet',
+                maxResults=1,
+                type='video'
+            ).execute()
+            
+            items = response.get('items', [])
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f'  ✓ API接続成功\n'
+                    f'  → 検索結果: {len(items)}件取得'
+                )
+            )
+            
+        except ImportError:
+            self.stdout.write(
+                self.style.ERROR(
+                    '  ✗ google-api-python-client がインストールされていません\n'
+                    '  → pip install google-api-python-client を実行してください'
+                )
+            )
+        except Exception as e:
+            error_message = str(e)
+            self.stdout.write(
+                self.style.ERROR(f'  ✗ API接続失敗: {error_message}')
+            )
+            
+            # Provide specific guidance based on error
+            if '400' in error_message:
+                self.stdout.write(
+                    self.style.WARNING(
+                        '  → 400 Bad Request: リクエストパラメータを確認してください'
+                    )
+                )
+            elif '401' in error_message or 'API key not valid' in error_message:
+                self.stdout.write(
+                    self.style.WARNING(
+                        '  → 401 Unauthorized: APIキーが無効です\n'
+                        '     Google Cloud Console で新しいAPIキーを発行してください'
+                    )
+                )
+            elif '403' in error_message:
+                self.stdout.write(
+                    self.style.WARNING(
+                        '  → 403 Forbidden: 以下を確認してください\n'
+                        '     1. YouTube Data API v3 が有効化されているか\n'
+                        '     2. 日次クォータ (10,000ユニット) を超過していないか\n'
+                        '     3. APIキーの制限設定'
+                    )
+                )
+            elif '429' in error_message:
+                self.stdout.write(
+                    self.style.WARNING(
+                        '  → 429 Too Many Requests: レート制限に達しています\n'
+                        '     しばらく待ってから再試行してください'
+                    )
+                )
+
+        self.stdout.write('\n=== 診断完了 ===')
+        self.stdout.write(
+            '\n問題が解決しない場合は以下を確認してください:\n'
+            '  https://console.cloud.google.com/apis/api/youtube.googleapis.com\n'
+        )
