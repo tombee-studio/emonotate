@@ -1,0 +1,41 @@
+# Task #338: YouTube Data API 修復作業
+
+## 問題の概要
+YouTube Data APIが使えなくなっています。
+
+## 必要な作業一覧
+
+### 1. APIキーの確認・更新
+- Google Cloud Console (https://console.cloud.google.com/) にアクセス
+- プロジェクトの認証情報を確認
+- YouTube Data API v3 が有効化されているか確認
+- APIキーの制限設定（HTTPリファラー、IPアドレス）を確認
+- 必要であれば新しいAPIキーを発行
+
+### 2. YouTube Data API v3 の有効化確認
+- Google Cloud Console → APIとサービス → ライブラリ
+- "YouTube Data API v3" を検索
+- 「有効にする」ボタンが表示されている場合は有効化
+- すでに有効な場合はクォータ使用量を確認
+
+### 3. クォータ（割り当て）の確認
+- Google Cloud Console → APIとサービス → 割り当て
+- YouTube Data API v3 の日次クォータ（デフォルト: 10,000ユニット/日）を確認
+- クォータを超過している場合はリセットを待つか増量申請を行う
+
+### 4. 環境変数・設定ファイルの更新
+- `.env` ファイルの `YOUTUBE_API_KEY` が正しい値であることを確認
+- Django settings.py の YouTube API 関連設定を確認
+- 本番環境の環境変数も更新
+
+### 5. APIエンドポイントの確認
+- YouTube Data API v3 のベースURL: `https://www.googleapis.com/youtube/v3/`
+- 非推奨エンドポイントを使用していないか確認
+- レスポンス形式の変更がないか公式ドキュメントを確認
+
+### 6. 請求アカウントの確認
+- Google Cloud Console → 請求
+- 請求アカウントが有効であることを確認
+- 支払い方法が有効であることを確認
+
+### 7. Pythonライブラリの更新
