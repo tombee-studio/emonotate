@@ -22,7 +22,7 @@ CloudFront が React と Django API を同一オリジンで配信します。Co
 1. Neon で開発用ブランチを選び、TLS 付きのプール接続 URL を用意します。本番には別のブランチまたはプロジェクトを使います。
 2. `ENV=dev bash scripts/setup-secrets.sh` で接続 URL と Django の秘密鍵を登録します。既存環境を移す場合は登録済みの秘密鍵を引き継ぎます。Lambda は起動時に Secrets Manager の `emonotate-dev-django` を取得します。
 3. Terraform 1.7 以上で `terraform -chdir=terraform/environments/dev init`、続いて `plan` を実行し、差分を確認して適用します。初回は既存の `terraform/bootstrap` の状態バケット・ロックテーブルと、ブートストラップイメージを作成する Docker が必要です。旧構成の `db_password`、`django_secret_key`、`cloudfront_domain` の tfvars は不要です。
-4. フロントエンドとバックエンドは Git サブモジュールです。両方の変更と親リポジトリの参照を揃えると、既存のデプロイワークフローが Lambda を更新し、マイグレーション・権限グループの初期化・フロントエンド配信を順に行います。本番環境の初回構築では同一リージョンの利用可能なプライベート ECR イメージ URI を `ecr_image_uri` に渡します。
+4. フロントエンドとバックエンドは Git サブモジュールです。それぞれのリポジトリの `develop` に push すると dev に、`master` に push すると本番に配信されます。バックエンドは Lambda の更新とマイグレーション、フロントエンドは S3・CloudFront への配信を行います。親リポジトリの参照は、配信後に更新してください。本番環境の初回構築では同一リージョンの利用可能なプライベート ECR イメージ URI を `ecr_image_uri` に渡します。
 5. `terraform -chdir=terraform/environments/dev output -raw cloudfront_domain` で表示されたホストを HTTPS で開きます。`ENV=dev bash scripts/e2e-verify.sh` でログイン開始時のセッション作成と Cognito へのリダイレクトを確認できます。
 
 YouTube の URL 入力には API キーは不要です。既存の YouTube 検索も使う場合はフロントエンドのビルド時に `REACT_APP_YOUTUBE_API_KEY` を指定します。
@@ -39,7 +39,15 @@ bash scripts/deploy-environment.sh stg && bash scripts/deploy-environment.sh pro
 
 dev と prod の GitHub Actions は、AWS アカウント共通の IAM OIDC プロバイダー `https://token.actions.githubusercontent.com` を参照します。新規 AWS アカウントでは、初回デプロイの前にこの URL と Audience `sts.amazonaws.com` で一度だけ登録してください。stg の手動デプロイには不要です。
 
-各環境を適用後、`terraform -chdir=terraform/environments/dev output -raw ci_role_arn` の値を GitHub Actions の `AWS_CI_ROLE_ARN_DEV` に設定します。本番はディレクトリ `prd`、シークレット `AWS_CI_ROLE_ARN_PRD` を使います。開発ロールは `develop`、本番ロールは `main` から引き受けられます。移行時は旧共通ロールとインラインポリシーが AWS に残ります。両環境の切り替え後、ほかの利用先も確認して旧ロールを廃止してください。
+各環境を一度手動で適用したあと、次の出力を GitHub Actions のシークレットに設定します(本番はディレクトリ `prd`、シークレット名の末尾は `_PRD`)。
+
+| 出力 | 設定先 | 用途 |
+|---|---|---|
+| `ci_role_arn` | emonotate-app・emonotate-backend の `AWS_CI_ROLE_ARN_DEV` | アプリの配信。dev は両リポジトリの `develop`、本番は `master` から引き受けられます |
+| `terraform_plan_role_arn` | このリポジトリの `AWS_TF_PLAN_ROLE_ARN_DEV` | PR での `terraform plan`(読み取り専用) |
+| `terraform_apply_role_arn` | このリポジトリの `AWS_TF_APPLY_ROLE_ARN_DEV` | `develop`(本番は `main`)への push での `terraform apply` |
+
+Terraform の変更はこのリポジトリで行います。`terraform/` を変える PR で差分(plan)を確認し、マージすると適用(apply)されます。`terraform/` に変更がない push では、このリポジトリのデプロイは動きません。移行時は旧共通ロールとインラインポリシーが AWS に残ります。両環境の切り替え後、ほかの利用先も確認して旧ロールを廃止してください。
 
 ### 既存データの引き継ぎ
 
@@ -128,9 +136,10 @@ The `commit-msg` hook enforces this format automatically after `make setup`.
 |---|---|---|
 | [test](.github/workflows/test.yml) | PR to `develop`/`main`, called by deploys | React test and build; Django check, migration check, migrate on TLS PostgreSQL, Cognito tests |
 | [require-linked-issue](.github/workflows/require-linked-issue.yml) | PR to `develop`/`main` | Fails unless the PR (`Closes #N` or Development sidebar) or its branch is linked to an issue |
-| [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | push to `develop` / `main`, or manual run | Runs [deploy](.github/workflows/deploy.yml). On push: integration tests for the referenced submodule commits, then a page and Cognito redirect check of the running environment. Manual run with `deploy` checked: also deploys both submodules (Lambda and migrations, then S3/CloudFront) |
+| [terraform-plan](.github/workflows/terraform-plan.yml) | PR to `develop` / `main` that changes `terraform/` | Runs [terraform](.github/workflows/terraform.yml) `plan` against dev / prd (read-only role) and shows the diff in the job summary |
+| [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | push to `develop` / `main` that changes `terraform/` | Runs [terraform](.github/workflows/terraform.yml) `apply` for dev / prd, then checks the page and Cognito redirect through CloudFront |
 
-The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy themselves: `develop` to dev and `master` to production. Both use the same commit rules, hooks and checks as this repository.
+Infrastructure changes are made in this repository: change `terraform/`, open a PR (plan), and merge (apply). The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy the apps themselves: `develop` to dev and `master` to production, using the `ci_role_arn` role. Both use the same commit rules, hooks and checks as this repository.
 | [update-task-status-on-merge](.github/workflows/update-task-status-on-merge.yml) | push to `develop` | Updates the status of each commit's task to merged |
 | [validate-releases-pr](.github/workflows/validate-releases-pr.yml) | PR opened/edited to `releases` | Checks that the PR body contains `Event: <event_id>` |
 | [update-event-status-on-merge-to-releases](.github/workflows/update-event-status-on-merge-to-releases.yml) | PR merged to `releases` | Updates the event status to released |
@@ -146,10 +155,12 @@ Set the following in **GitHub → Settings → Secrets and variables → Actions
 | `TASK_STATUS_MERGE_ID` | Status ID that represents "merged" in the task tool |
 | `TOOL_EVENT_API_URL` | Event update endpoint base URL (e.g. `https://<host>/api/task_app/events/`) |
 | `EVENT_STATUS_RELEASE_ID` | Status ID that represents "released" in the task tool |
-| `AWS_CI_ROLE_ARN_DEV` / `AWS_CI_ROLE_ARN_PRD` | `ci_role_arn` output of `terraform/environments/dev` / `prd` |
-| `DEV_API_ENDPOINT` / `PRD_API_ENDPOINT` | `REACT_APP_API_URL` for the frontend build |
+| `AWS_TF_PLAN_ROLE_ARN_DEV` / `AWS_TF_PLAN_ROLE_ARN_PRD` | `terraform_plan_role_arn` output of `terraform/environments/dev` / `prd` |
+| `AWS_TF_APPLY_ROLE_ARN_DEV` / `AWS_TF_APPLY_ROLE_ARN_PRD` | `terraform_apply_role_arn` output of `terraform/environments/dev` / `prd` |
 
 To block merging, mark `React test and build`, `Django test` and `Linked issue` as required status checks for `develop` and `main`.
+
+The Terraform roles are created by Terraform itself, so apply each environment once by hand (`terraform -chdir=terraform/environments/<env> apply`) before the workflows can run. `AWS_CI_ROLE_ARN_DEV` / `AWS_CI_ROLE_ARN_PRD` (`ci_role_arn`) are set in the frontend and backend repositories, not here.
 
 ### PR format for `releases` branch
 

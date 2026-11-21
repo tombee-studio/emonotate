@@ -50,7 +50,6 @@ module "iam_oidc" {
   project    = local.project
   github_org = "tombee-studio"
   github_refs = {
-    emonotate         = "main"
     emonotate-backend = "master"
     emonotate-app     = "master"
   }
@@ -84,4 +83,21 @@ module "cognito" {
 
 output "cloudfront_distribution_id" {
   value = module.s3_cloudfront.cloudfront_distribution_id
+}
+
+module "terraform_ci" {
+  source        = "../../modules/terraform_ci"
+  project       = local.project
+  env           = local.env
+  github_org    = "tombee-studio"
+  github_repo   = "emonotate"
+  github_branch = "main"
+}
+
+output "terraform_plan_role_arn" {
+  value = module.terraform_ci.plan_role_arn
+}
+
+output "terraform_apply_role_arn" {
+  value = module.terraform_ci.apply_role_arn
 }

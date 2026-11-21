@@ -1,37 +1,32 @@
-name: Verify prd
+name: Deploy infrastructure to prd
 
-# Push: run the integration tests for the submodule commits this repository
-# points at, then check the running prd environment. The frontend and backend
-# repositories deploy themselves, so nothing is deployed here.
-# Manual run with "deploy" checked: deploy both submodules, then verify.
-run-name: ${{ inputs.deploy && 'Deploy' || 'Verify' }} ${{ github.sha }} on prd
+# Runs only when a push to main changes Terraform. The frontend and backend
+# repositories deploy the apps themselves.
+run-name: Terraform apply ${{ github.sha }} to prd
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      deploy:
-        description: "Deploy both submodules at this commit before verifying"
-        type: boolean
-        default: false
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/deploy-prd.yml"
 
 permissions:
   id-token: write
   contents: read
 
-# Never run two deploys to the same environment at once; queue them instead.
+# Never run two applies to the same environment at once; queue them instead.
 concurrency:
-  group: deploy-prd
+  group: terraform-prd
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    uses: ./.github/workflows/deploy.yml
+  apply:
+    uses: ./.github/workflows/terraform.yml
     with:
       environment: prd
-      deploy: ${{ inputs.deploy == true }}
+      command: apply
     secrets:
-      aws_role_arn: ${{ secrets.AWS_CI_ROLE_ARN_PRD }}
-      api_endpoint: ${{ secrets.PRD_API_ENDPOINT }}
+      aws_role_arn: ${{ secrets.AWS_TF_APPLY_ROLE_ARN_PRD }}
