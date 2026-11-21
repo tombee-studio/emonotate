@@ -1,0 +1,217 @@
+name: Deploy (reusable)
+
+# Shared pipeline for every AWS environment:
+#   test -> backend (ECR, Lambda, migrate) -> frontend (S3, CloudFront) -> verify
+# Each stage runs only when the previous one succeeded.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Environment name used in AWS resource names (dev or prd)"
+        required: true
+        type: string
+    secrets:
+      aws_role_arn:
+        description: "IAM role assumed through GitHub OIDC for this environment"
+        required: true
+      api_endpoint:
+        description: "REACT_APP_API_URL used for the frontend build"
+        required: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  PROJECT: emonotate
+  ENV: ${{ inputs.environment }}
+
+jobs:
+  test:
+    name: Test
+    uses: ./.github/workflows/test.yml
+
+  deploy-backend:
+    name: Deploy backend (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      image_uri: ${{ steps.build.outputs.image_uri }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          REPO="${REGISTRY}/${PROJECT}-${ENV}-backend"
+          docker build --platform linux/amd64 --provenance=false \
+            -f emonotate-backend/Dockerfile.aws \
+            -t "${REPO}:${IMAGE_TAG}" \
+            -t "${REPO}:latest" \
+            emonotate-backend/
+          docker push "${REPO}:${IMAGE_TAG}"
+          docker push "${REPO}:latest"
+          echo "image_uri=${REPO}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Lambda function code
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+        run: |
+          FUNCTION="${PROJECT}-${ENV}-backend"
+          aws lambda wait function-updated --function-name "$FUNCTION"
+          aws lambda update-function-code \
+            --function-name "$FUNCTION" \
+            --image-uri "$IMAGE_URI" \
+            --query FunctionArn --output text
+          aws lambda wait function-updated --function-name "$FUNCTION"
+
+      - name: Run database migrations
+        run: |
+          response=$(mktemp)
+          aws lambda invoke \
+            --function-name "${PROJECT}-${ENV}-backend" \
+            --cli-read-timeout 210 \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{"manage":"migrate --fake-initial --noinput"}' \
+            "$response" > /dev/null
+          # Fails the step unless the handler reported {"status": "ok"}.
+          jq -er 'if .status == "ok" then .output
+                  else error(.error // .errorMessage // "Migration failed") end' "$response"
+
+  deploy-frontend:
+    name: Deploy frontend (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: emonotate-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: emonotate-app
+        run: npm ci
+
+      - name: Build
+        working-directory: emonotate-app
+        env:
+          REACT_APP_API_URL: ${{ secrets.api_endpoint }}
+          REACT_APP_YOUTUBE_API_KEY: ${{ vars.REACT_APP_YOUTUBE_API_KEY }}
+          REACT_APP_ENV: ${{ inputs.environment }}
+          NODE_OPTIONS: --openssl-legacy-provider
+          CI: "false"
+        run: npm run build
+
+      - name: Deploy to S3
+        run: |
+          BUCKET="${PROJECT}-${ENV}-frontend"
+          aws s3 sync emonotate-app/build/ "s3://${BUCKET}" \
+            --delete \
+            --cache-control "public, max-age=31536000" \
+            --exclude "index.html"
+          aws s3 cp emonotate-app/build/index.html "s3://${BUCKET}/index.html" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          CF_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${PROJECT}-${ENV}-frontend-cf'].Id" \
+            --output text)
+          if [[ -z "$CF_ID" || "$CF_ID" == "None" ]]; then
+            echo "::error::CloudFront distribution ${PROJECT}-${ENV}-frontend-cf not found"
+            exit 1
+          fi
+          aws cloudfront create-invalidation \
+            --distribution-id "$CF_ID" \
+            --paths "/*"
+
+  verify:
+    name: Verify (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: [deploy-backend, deploy-frontend]
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check page and Cognito redirect through CloudFront
+        id: verify
+        run: |
+          DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${PROJECT}-${ENV}-frontend-cf'].DomainName" \
+            --output text)
+          if [[ -z "$DOMAIN" || "$DOMAIN" == "None" ]]; then
+            echo "::error::CloudFront distribution ${PROJECT}-${ENV}-frontend-cf not found"
+            exit 1
+          fi
+          echo "url=https://${DOMAIN}/" >> "$GITHUB_OUTPUT"
+
+          # The invalidation may take a moment, so retry a few times.
+          for attempt in 1 2 3 4 5 6; do
+            if curl --fail --silent --show-error --max-time 20 "https://${DOMAIN}/" \
+                | grep -q 'id="root"'; then
+              echo "Page OK: https://${DOMAIN}/"
+              page_ok=1
+              break
+            fi
+            echo "Page not ready (attempt ${attempt}), retrying..."
+            sleep 10
+          done
+          if [[ -z "${page_ok:-}" ]]; then
+            echo "::error::https://${DOMAIN}/ did not serve the React app"
+            exit 1
+          fi
+
+          location=$(curl --fail --silent --show-error --max-time 20 \
+            --output /dev/null --write-out '%{redirect_url}' \
+            "https://${DOMAIN}/api/cognito/login/")
+          if [[ "$location" != https://*.amazoncognito.com/oauth2/authorize\?* ]]; then
+            echo "::error::Login did not redirect to Cognito (got: '${location}')"
+            exit 1
+          fi
+          echo "Cognito redirect OK"
+
+      - name: Write deployment summary
+        if: always()
+        env:
+          IMAGE_URI: ${{ needs.deploy-backend.outputs.image_uri }}
+          URL: ${{ steps.verify.outputs.url }}
+          RESULT: ${{ steps.verify.outcome }}
+        run: |
+          {
+            echo "### Deploy to ${ENV}"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Environment | \`${ENV}\` |"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Ref | \`${GITHUB_REF_NAME}\` |"
+            echo "| Lambda image | \`${IMAGE_URI}\` |"
+            echo "| URL | ${URL:-unknown} |"
+            echo "| Verification | ${RESULT} |"
+          } >> "$GITHUB_STEP_SUMMARY"
