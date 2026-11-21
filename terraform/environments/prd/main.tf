@@ -45,12 +45,15 @@ module "api_gateway_lambda" {
 }
 
 module "iam_oidc" {
-  source                       = "../../modules/iam_oidc"
-  env                          = local.env
-  github_branch                = "main"
-  project                      = local.project
-  github_org                   = "tombee-studio"
-  github_repo                  = "emonotate"
+  source     = "../../modules/iam_oidc"
+  env        = local.env
+  project    = local.project
+  github_org = "tombee-studio"
+  github_refs = {
+    emonotate         = "main"
+    emonotate-backend = "master"
+    emonotate-app     = "master"
+  }
   ecr_repository_arns          = [module.ecr.repository_arn]
   frontend_bucket_arns         = [module.s3_cloudfront.frontend_bucket_arn]
   lambda_function_arns         = [module.api_gateway_lambda.lambda_function_arn]

@@ -8,18 +8,13 @@ variable "env" {
   type        = string
 }
 
-variable "github_branch" {
-  description = "Git branch that deploys this environment"
-  type        = string
+variable "github_refs" {
+  description = "Map of repository name to the branch allowed to deploy this environment"
+  type        = map(string)
 }
 
 variable "github_org" {
   description = "GitHub organization or user name"
-  type        = string
-}
-
-variable "github_repo" {
-  description = "GitHub repository name"
   type        = string
 }
 

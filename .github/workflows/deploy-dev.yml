@@ -1,11 +1,21 @@
-name: Deploy to dev
+name: Verify dev
 
-run-name: Deploy ${{ github.sha }} to dev
+# Push: run the integration tests for the submodule commits this repository
+# points at, then check the running dev environment. The frontend and backend
+# repositories deploy themselves, so nothing is deployed here.
+# Manual run with "deploy" checked: deploy both submodules, then verify.
+run-name: ${{ inputs.deploy && 'Deploy' || 'Verify' }} ${{ github.sha }} on dev
 
 on:
   push:
     branches:
       - develop
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Deploy both submodules at this commit before verifying"
+        type: boolean
+        default: false
 
 permissions:
   id-token: write
@@ -21,6 +31,7 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       environment: dev
+      deploy: ${{ inputs.deploy == true }}
     secrets:
       aws_role_arn: ${{ secrets.AWS_CI_ROLE_ARN_DEV }}
       api_endpoint: ${{ secrets.DEV_API_ENDPOINT }}

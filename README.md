@@ -128,7 +128,9 @@ The `commit-msg` hook enforces this format automatically after `make setup`.
 |---|---|---|
 | [test](.github/workflows/test.yml) | PR to `develop`/`main`, called by deploys | React test and build; Django check, migration check, migrate on TLS PostgreSQL, Cognito tests |
 | [require-linked-issue](.github/workflows/require-linked-issue.yml) | PR to `develop`/`main` | Fails unless the PR (`Closes #N` or Development sidebar) or its branch is linked to an issue |
-| [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | push to `develop` / `main` | Runs [deploy](.github/workflows/deploy.yml): test → Lambda and migrations → S3/CloudFront → page and Cognito redirect check |
+| [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | push to `develop` / `main`, or manual run | Runs [deploy](.github/workflows/deploy.yml). On push: integration tests for the referenced submodule commits, then a page and Cognito redirect check of the running environment. Manual run with `deploy` checked: also deploys both submodules (Lambda and migrations, then S3/CloudFront) |
+
+The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy themselves: `develop` to dev and `master` to production. Both use the same commit rules, hooks and checks as this repository.
 | [update-task-status-on-merge](.github/workflows/update-task-status-on-merge.yml) | push to `develop` | Updates the status of each commit's task to merged |
 | [validate-releases-pr](.github/workflows/validate-releases-pr.yml) | PR opened/edited to `releases` | Checks that the PR body contains `Event: <event_id>` |
 | [update-event-status-on-merge-to-releases](.github/workflows/update-event-status-on-merge-to-releases.yml) | PR merged to `releases` | Updates the event status to released |
