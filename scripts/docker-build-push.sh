@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-ENV="${ENV:?ENV must be set to dev or prd}"
+ENV="${ENV:?ENV must be set to dev, stg or prd}"
 REGION="${AWS_REGION:-ap-northeast-1}"
 PROJECT="emonotate"
 IMAGE_TAG="${IMAGE_TAG:-$(git -C emonotate-backend rev-parse --short HEAD 2>/dev/null || echo latest)}"
@@ -27,7 +27,7 @@ aws ecr get-login-password --region "$REGION" \
   | docker login --username AWS --password-stdin "$REGISTRY"
 
 echo "Building image: ${FULL_IMAGE}:${IMAGE_TAG} ..."
-docker build \
+docker build --platform linux/amd64 --provenance=false \
   -f emonotate-backend/Dockerfile.aws \
   -t "${FULL_IMAGE}:${IMAGE_TAG}" \
   -t "${FULL_IMAGE}:latest" \
