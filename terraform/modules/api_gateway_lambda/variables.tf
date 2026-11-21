@@ -13,48 +13,12 @@ variable "ecr_image_uri" {
   type        = string
 }
 
-variable "vpc_id" {
-  description = "VPC ID"
-  type        = string
+variable "cognito_domain" {
+  type = string
 }
 
-variable "private_subnet_ids" {
-  description = "Private subnet IDs for Lambda VPC config"
-  type        = list(string)
-}
-
-variable "lambda_security_group_id" {
-  description = "Security group ID for Lambda"
-  type        = string
-}
-
-variable "db_host" {
-  description = "Aurora cluster endpoint"
-  type        = string
-}
-
-variable "db_name" {
-  description = "PostgreSQL database name"
-  type        = string
-  default     = "emonotate"
-}
-
-variable "db_user" {
-  description = "PostgreSQL username"
-  type        = string
-  default     = "emonotate"
-}
-
-variable "db_password" {
-  description = "PostgreSQL password"
-  type        = string
-  sensitive   = true
-}
-
-variable "django_secret_key" {
-  description = "Django SECRET_KEY"
-  type        = string
-  sensitive   = true
+variable "cognito_client_id" {
+  type = string
 }
 
 variable "media_bucket_name" {
@@ -78,4 +42,8 @@ variable "lambda_timeout_sec" {
   description = "Lambda timeout in seconds"
   type        = number
   default     = 30
+}
+
+variable "cognito_pool_id" {
+  type = string
 }

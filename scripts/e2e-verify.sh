@@ -10,15 +10,15 @@
 
 set -euo pipefail
 
-ENV="${ENV:?ENV must be set to dev or prd}"
+ENV="${ENV:?ENV must be set to dev, stg or prd}"
 REGION="${AWS_REGION:-ap-northeast-1}"
 PROJECT="emonotate"
 
 PASS=0
 FAIL=0
 
-pass() { echo "[PASS] $1"; ((PASS++)); }
-fail() { echo "[FAIL] $1"; ((FAIL++)); }
+pass() { echo "[PASS] $1"; ((++PASS)); }
+fail() { echo "[FAIL] $1"; ((++FAIL)); }
 
 # --- 1. Lambda health check ---
 echo "=== Lambda ==="
@@ -58,19 +58,20 @@ else
   fail "API Gateway not found"
 fi
 
-# --- 3. RDS check ---
-echo ""
-echo "=== RDS ==="
-DB_STATE=$(aws rds describe-db-instances \
-  --db-instance-identifier "${PROJECT}-${ENV}-db" \
-  --region "$REGION" \
-  --query "DBInstances[0].DBInstanceStatus" \
-  --output text 2>/dev/null || echo "NOT_FOUND")
-
-if [[ "$DB_STATE" == "available" ]]; then
-  pass "RDS instance is available"
+# Starting a Cognito flow writes its state to a database-backed session.
+if [[ -n "${API_ENDPOINT:-}" ]]; then
+  location=$(curl -fsS --max-time 20 -o /dev/null -w '%{redirect_url}' \
+    "${API_ENDPOINT}/api/cognito/login/" || true)
+  if [[ "$location" == https://*.amazoncognito.com/oauth2/authorize\?* ]]; then
+    pass "Neon session and Cognito redirect"
+  else
+    fail "Could not start Cognito sign-in"
+  fi
+fi
+if aws s3api head-bucket --bucket "${PROJECT}-${ENV}-media" >/dev/null 2>&1; then
+  pass "S3 media bucket exists"
 else
-  fail "RDS instance state: ${DB_STATE}"
+  fail "S3 media bucket unavailable"
 fi
 
 # --- 4. S3 frontend bucket ---

@@ -1,0 +1,121 @@
+name: Test
+
+# Runs on PRs to develop/main and is reused by the deploy workflows,
+# so a failing test blocks both merging (with branch protection) and deploying.
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  frontend:
+    name: React test and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Show submodule commits
+        run: git submodule status
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: emonotate-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: emonotate-app
+        run: npm ci
+
+      - name: Test
+        working-directory: emonotate-app
+        env:
+          CI: "true"
+        run: npm test -- --watchAll=false
+
+      - name: Build
+        working-directory: emonotate-app
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
+          CI: "false"
+        run: npm run build
+
+  backend:
+    name: Django test
+    runs-on: ubuntu-latest
+    env:
+      # Same settings module the Lambda uses; values are CI-only dummies.
+      DJANGO_SETTINGS_MODULE: backend.settings.aws
+      DJANGO_SECRET_KEY: ci-only-secret
+      DATABASE_URL: postgres://emonotate:postgres@localhost:5432/emonotate
+      APP_BASE: testserver
+      COGNITO_POOL_ID: ci-pool
+      COGNITO_DOMAIN: https://ci.auth.ap-northeast-1.amazoncognito.com
+      COGNITO_CLIENT_ID: ci-client
+      AWS_STORAGE_BUCKET_NAME: ci-dummy-bucket
+      AWS_REGION: ap-northeast-1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Show submodule commits
+        run: git submodule status
+
+      # backend.settings.aws requires TLS, like Neon. Service containers
+      # cannot pass server flags, so start PostgreSQL with SSL here.
+      - name: Start PostgreSQL with TLS
+        run: |
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=emonotate -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=emonotate \
+            postgres:16 \
+            -c ssl=on \
+            -c ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem \
+            -c ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+          for _ in $(seq 1 30); do
+            docker exec postgres pg_isready -U emonotate -h localhost && exit 0
+            sleep 2
+          done
+          docker logs postgres
+          exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: emonotate-backend/requirements-aws.txt
+
+      - name: Install dependencies
+        working-directory: emonotate-backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-aws.txt
+
+      - name: Django system check
+        working-directory: emonotate-backend
+        run: python manage.py check
+
+      - name: Check for missing migrations
+        working-directory: emonotate-backend
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply migrations to PostgreSQL
+        working-directory: emonotate-backend
+        run: python manage.py migrate --noinput
+
+      - name: Test
+        working-directory: emonotate-backend
+        run: |
+          python manage.py test users.test.test_cloud_annotation \
+            --settings=backend.settings.test_cloud --noinput

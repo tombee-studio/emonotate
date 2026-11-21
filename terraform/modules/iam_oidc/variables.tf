@@ -3,13 +3,18 @@ variable "project" {
   type        = string
 }
 
-variable "github_org" {
-  description = "GitHub organization or user name"
+variable "env" {
+  description = "Deployment environment used in the CI role name"
   type        = string
 }
 
-variable "github_repo" {
-  description = "GitHub repository name"
+variable "github_refs" {
+  description = "Map of repository name to the branch allowed to deploy this environment"
+  type        = map(string)
+}
+
+variable "github_org" {
+  description = "GitHub organization or user name"
   type        = string
 }
 

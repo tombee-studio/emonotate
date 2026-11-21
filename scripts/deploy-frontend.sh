@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-ENV="${ENV:?ENV must be set to dev or prd}"
+ENV="${ENV:?ENV must be set to dev, stg or prd}"
 REGION="${AWS_REGION:-ap-northeast-1}"
 PROJECT="emonotate"
 API_ENDPOINT="${API_ENDPOINT:?API_ENDPOINT must be set to the API Gateway URL}"
@@ -20,9 +20,15 @@ BUCKET_NAME="${PROJECT}-${ENV}-frontend"
 APP_DIR="emonotate-app"
 
 echo "Fetching CloudFront distribution ID for bucket ${BUCKET_NAME} ..."
-CF_DIST_ID=$(aws cloudfront list-distributions \
-  --query "DistributionList.Items[?Origins.Items[0].DomainName=='${BUCKET_NAME}.s3.ap-northeast-1.amazonaws.com'].Id" \
-  --output text)
+CF_DIST_ID="${CLOUDFRONT_DISTRIBUTION_ID:-}"
+if [[ -z "$CF_DIST_ID" ]]; then
+  CF_DIST_ID=$(aws cloudfront list-distributions \
+    --query "DistributionList.Items[?Comment=='${PROJECT}-${ENV}-frontend-cf'].Id" --output text)
+fi
+if [[ -z "$CF_DIST_ID" || "$CF_DIST_ID" == "None" ]]; then
+  echo "CloudFront distribution for ${PROJECT}-${ENV} was not found." >&2
+  exit 1
+fi
 
 echo "Building frontend for ${ENV} environment ..."
 cd "$APP_DIR"
@@ -44,14 +50,7 @@ aws s3 cp build/index.html "s3://${BUCKET_NAME}/index.html" \
 
 cd ..
 
-if [[ -n "$CF_DIST_ID" ]]; then
-  echo "Invalidating CloudFront cache for distribution: ${CF_DIST_ID} ..."
-  aws cloudfront create-invalidation \
-    --distribution-id "$CF_DIST_ID" \
-    --paths "/*"
-  echo "Cache invalidation initiated."
-else
-  echo "WARNING: CloudFront distribution not found. Skipping invalidation."
-fi
-
+invalidation=$(aws cloudfront create-invalidation --distribution-id "$CF_DIST_ID" \
+  --paths "/*" --query Invalidation.Id --output text)
+aws cloudfront wait invalidation-completed --distribution-id "$CF_DIST_ID" --id "$invalidation"
 echo "Frontend deployed to s3://${BUCKET_NAME}"

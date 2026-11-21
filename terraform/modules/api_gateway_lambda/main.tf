@@ -24,12 +24,20 @@ resource "aws_iam_role" "lambda" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
+resource "aws_iam_role_policy_attachment" "lambda_logs" {
   role       = aws_iam_role.lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "aws_secretsmanager_secret" "backend" {
+  name = "${local.name_prefix}-django"
 }
 
 data "aws_iam_policy_document" "lambda_perms" {
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [data.aws_secretsmanager_secret.backend.arn]
+  }
   statement {
     sid     = "S3Media"
     actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
@@ -57,20 +65,13 @@ resource "aws_lambda_function" "backend" {
   memory_size = var.lambda_memory_mb
   timeout     = var.lambda_timeout_sec
 
-  vpc_config {
-    subnet_ids         = var.private_subnet_ids
-    security_group_ids = [var.lambda_security_group_id]
-  }
-
   environment {
     variables = {
       DJANGO_SETTINGS_MODULE  = "backend.settings.aws"
-      DJANGO_SECRET_KEY       = var.django_secret_key
-      DB_HOST                 = var.db_host
-      DB_NAME                 = var.db_name
-      DB_USER                 = var.db_user
-      DB_PASSWORD             = var.db_password
-      DB_PORT                 = "5432"
+      DJANGO_SECRET_NAME      = data.aws_secretsmanager_secret.backend.arn
+      COGNITO_POOL_ID         = var.cognito_pool_id
+      COGNITO_DOMAIN          = var.cognito_domain
+      COGNITO_CLIENT_ID       = var.cognito_client_id
       AWS_STORAGE_BUCKET_NAME = var.media_bucket_name
       APP_BASE                = var.app_base
       STAGE                   = "AWS"
@@ -99,13 +100,6 @@ resource "aws_cloudwatch_log_group" "backend" {
 resource "aws_apigatewayv2_api" "main" {
   name          = "${local.name_prefix}-api"
   protocol_type = "HTTP"
-
-  cors_configuration {
-    allow_origins = var.app_base != "" ? ["https://${var.app_base}"] : ["*"]
-    allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    allow_headers = ["Content-Type", "Authorization", "X-API-Key", "X-CSRFToken"]
-    max_age       = 300
-  }
 
   tags = {
     Name    = "${local.name_prefix}-api"
