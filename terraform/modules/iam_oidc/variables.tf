@@ -3,6 +3,16 @@ variable "project" {
   type        = string
 }
 
+variable "env" {
+  description = "Deployment environment used in the CI role name"
+  type        = string
+}
+
+variable "github_branch" {
+  description = "Git branch that deploys this environment"
+  type        = string
+}
+
 variable "github_org" {
   description = "GitHub organization or user name"
   type        = string

@@ -1,11 +1,35 @@
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+# The provider is shared across projects and environments in this AWS account.
+removed {
+  from = aws_iam_openid_connect_provider.github
+  lifecycle {
+    destroy = false
+  }
 }
 
-locals {
-  oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+
+  lifecycle {
+    postcondition {
+      condition     = contains(self.client_id_list, "sts.amazonaws.com")
+      error_message = "The shared GitHub OIDC provider must include the sts.amazonaws.com audience."
+    }
+  }
+}
+
+# Keep the former shared role usable while GitHub secrets switch to the new roles.
+removed {
+  from = aws_iam_role.ci
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_iam_role_policy.ci
+  lifecycle {
+    destroy = false
+  }
 }
 
 data "aws_iam_policy_document" "ci_assume" {
@@ -13,12 +37,12 @@ data "aws_iam_policy_document" "ci_assume" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [local.oidc_provider_arn]
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
+      values   = ["repo:${var.github_org}/${var.github_repo}:ref:refs/heads/${var.github_branch}"]
     }
     condition {
       test     = "StringEquals"
@@ -28,8 +52,8 @@ data "aws_iam_policy_document" "ci_assume" {
   }
 }
 
-resource "aws_iam_role" "ci" {
-  name               = "${var.project}-github-actions-ci"
+resource "aws_iam_role" "deploy" {
+  name               = "${var.project}-${var.env}-github-actions-ci"
   assume_role_policy = data.aws_iam_policy_document.ci_assume.json
 
   tags = {
@@ -39,8 +63,8 @@ resource "aws_iam_role" "ci" {
 
 data "aws_iam_policy_document" "ci_perms" {
   statement {
-    sid = "ECRAuth"
-    actions = ["ecr:GetAuthorizationToken"]
+    sid       = "ECRAuth"
+    actions   = ["ecr:GetAuthorizationToken"]
     resources = ["*"]
   }
 
@@ -62,6 +86,8 @@ data "aws_iam_policy_document" "ci_perms" {
     sid = "LambdaDeploy"
     actions = [
       "lambda:UpdateFunctionCode",
+      "lambda:GetFunctionConfiguration",
+      "lambda:InvokeFunction",
       "lambda:GetFunction",
       "lambda:PublishVersion",
     ]
@@ -83,20 +109,20 @@ data "aws_iam_policy_document" "ci_perms" {
   }
 
   statement {
-    sid     = "CloudFrontList"
-    actions = ["cloudfront:ListDistributions"]
+    sid       = "CloudFrontList"
+    actions   = ["cloudfront:ListDistributions"]
     resources = ["*"]
   }
 
   statement {
-    sid = "CloudFrontInvalidate"
-    actions = ["cloudfront:CreateInvalidation"]
+    sid       = "CloudFrontInvalidate"
+    actions   = ["cloudfront:CreateInvalidation"]
     resources = var.cloudfront_distribution_arns
   }
 }
 
-resource "aws_iam_role_policy" "ci" {
+resource "aws_iam_role_policy" "deploy" {
   name   = "${var.project}-ci-policy"
-  role   = aws_iam_role.ci.id
+  role   = aws_iam_role.deploy.id
   policy = data.aws_iam_policy_document.ci_perms.json
 }

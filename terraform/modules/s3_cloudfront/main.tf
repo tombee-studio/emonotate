@@ -30,7 +30,23 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
   signing_protocol                  = "sigv4"
 }
 
+resource "aws_cloudfront_function" "app_routes" {
+  name    = "${local.name_prefix}-app-routes"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-JS
+    function handler(event) {
+      var request = event.request;
+      if (request.uri === "/" || request.uri.indexOf("/app/") === 0) {
+        request.uri = "/index.html";
+      }
+      return request;
+    }
+  JS
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
+  comment             = "${local.name_prefix}-frontend-cf"
   enabled             = true
   default_root_object = "index.html"
   price_class         = "PriceClass_200"
@@ -41,24 +57,21 @@ resource "aws_cloudfront_distribution" "frontend" {
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
-  dynamic "origin" {
-    for_each = var.api_gateway_url != "" ? [1] : []
-    content {
-      domain_name = local.api_gateway_host
-      origin_id   = "APIGW-${local.name_prefix}"
-      custom_origin_config {
-        http_port              = 80
-        https_port             = 443
-        origin_protocol_policy = "https-only"
-        origin_ssl_protocols   = ["TLSv1.2"]
-      }
+  origin {
+    domain_name = local.api_gateway_host
+    origin_id   = "APIGW-${local.name_prefix}"
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
 
   dynamic "ordered_cache_behavior" {
-    for_each = var.api_gateway_url != "" ? [
+    for_each = [
       "/api/*", "/history/*", "/free-hand/*", "/fold-line/*", "/auth/*", "/admin/*"
-    ] : []
+    ]
     content {
       path_pattern           = ordered_cache_behavior.value
       target_origin_id       = "APIGW-${local.name_prefix}"
@@ -69,7 +82,7 @@ resource "aws_cloudfront_distribution" "frontend" {
 
       forwarded_values {
         query_string = true
-        headers      = ["Origin", "Authorization", "X-CSRFToken", "Content-Type", "Accept"]
+        headers      = ["Origin", "Referer", "Authorization", "X-CSRFToken", "Content-Type", "Accept"]
         cookies {
           forward = "all"
         }
@@ -82,6 +95,11 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   default_cache_behavior {
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.app_routes.arn
+    }
+
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "S3-${aws_s3_bucket.frontend.bucket}"
@@ -98,18 +116,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     min_ttl     = 0
     default_ttl = 3600
     max_ttl     = 86400
-  }
-
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
-  custom_error_response {
-    error_code         = 404
-    response_code      = 200
-    response_page_path = "/index.html"
   }
 
   aliases = var.frontend_domain != "" ? [var.frontend_domain] : []
@@ -182,8 +188,8 @@ resource "aws_s3_bucket_cors_configuration" "media" {
 
   cors_rule {
     allowed_headers = ["*"]
-    allowed_methods = ["GET", "PUT", "POST"]
-    allowed_origins = ["*"]
+    allowed_methods = ["GET", "HEAD", "POST"]
+    allowed_origins = ["https://${aws_cloudfront_distribution.frontend.domain_name}"]
     max_age_seconds = 3000
   }
 }

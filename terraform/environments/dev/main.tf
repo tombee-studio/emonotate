@@ -3,10 +3,11 @@ locals {
   env     = "dev"
 }
 
-module "network" {
-  source  = "../../modules/network"
-  project = local.project
-  env     = local.env
+removed {
+  from = module.network
+  lifecycle {
+    destroy = false
+  }
 }
 
 module "ecr" {
@@ -15,16 +16,11 @@ module "ecr" {
   env     = local.env
 }
 
-module "rds" {
-  source                   = "../../modules/rds"
-  project                  = local.project
-  env                      = local.env
-  vpc_id                   = module.network.vpc_id
-  private_subnet_ids       = module.network.private_subnet_ids
-  rds_security_group_id    = module.network.rds_security_group_id
-  db_password  = var.db_password
-  min_capacity = 0
-  max_capacity = 1
+removed {
+  from = module.rds
+  lifecycle {
+    destroy = false
+  }
 }
 
 module "s3_cloudfront" {
@@ -44,7 +40,7 @@ resource "null_resource" "push_bootstrap_image" {
       aws ecr get-login-password --region ap-northeast-1 \
         | docker login --username AWS --password-stdin ${module.ecr.repository_url}
       mkdir -p /tmp/bootstrap-lambda
-      printf 'FROM public.ecr.aws/lambda/python:3.9\nCMD ["lambda_handler.handler"]\n' \
+      printf 'FROM public.ecr.aws/lambda/python:3.12\nCMD ["lambda_handler.handler"]\n' \
         > /tmp/bootstrap-lambda/Dockerfile
       docker buildx build --platform linux/amd64 --provenance=false \
         -t ${module.ecr.repository_url}:bootstrap \
@@ -56,28 +52,25 @@ resource "null_resource" "push_bootstrap_image" {
 }
 
 module "api_gateway_lambda" {
-  source                   = "../../modules/api_gateway_lambda"
-  project                  = local.project
-  env                      = local.env
-  ecr_image_uri            = "${module.ecr.repository_url}:bootstrap"
-  vpc_id                   = module.network.vpc_id
-  private_subnet_ids       = module.network.private_subnet_ids
-  lambda_security_group_id = module.network.lambda_security_group_id
-  db_host                  = module.rds.db_host
-  db_name                  = module.rds.db_name
-  db_user                  = module.rds.db_username
-  db_password              = var.db_password
-  django_secret_key        = var.django_secret_key
-  media_bucket_name        = module.s3_cloudfront.media_bucket_name
-  app_base                 = var.cloudfront_domain
-  lambda_memory_mb         = 512
-  lambda_timeout_sec       = 30
+  source             = "../../modules/api_gateway_lambda"
+  project            = local.project
+  env                = local.env
+  ecr_image_uri      = "${module.ecr.repository_url}:bootstrap"
+  app_base           = module.s3_cloudfront.cloudfront_domain_name
+  cognito_pool_id    = module.cognito.pool_id
+  cognito_domain     = module.cognito.domain
+  cognito_client_id  = module.cognito.client_id
+  media_bucket_name  = module.s3_cloudfront.media_bucket_name
+  lambda_memory_mb   = 512
+  lambda_timeout_sec = 180
 
   depends_on = [null_resource.push_bootstrap_image]
 }
 
 module "iam_oidc" {
   source                       = "../../modules/iam_oidc"
+  env                          = local.env
+  github_branch                = "develop"
   project                      = local.project
   github_org                   = "tombee-studio"
   github_repo                  = "emonotate"
@@ -101,4 +94,14 @@ output "ecr_repository_url" {
 
 output "ci_role_arn" {
   value = module.iam_oidc.ci_role_arn
+}
+
+module "cognito" {
+  source   = "../../modules/cognito"
+  name     = "${local.project}-${local.env}"
+  app_base = module.s3_cloudfront.cloudfront_domain_name
+}
+
+output "cloudfront_distribution_id" {
+  value = module.s3_cloudfront.cloudfront_distribution_id
 }
