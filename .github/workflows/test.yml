@@ -53,7 +53,8 @@ jobs:
 
   backend:
     name: Django test
-    runs-on: ubuntu-latest
+    # Python 3.9 is not provided for newer Ubuntu images used by ubuntu-latest.
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
