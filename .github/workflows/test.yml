@@ -53,33 +53,18 @@ jobs:
 
   backend:
     name: Django test
-    # Python 3.9 is not provided for newer Ubuntu images used by ubuntu-latest.
-    runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: emonotate
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: emonotate
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U emonotate"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    runs-on: ubuntu-latest
     env:
+      # Same settings module the Lambda uses; values are CI-only dummies.
       DJANGO_SETTINGS_MODULE: backend.settings.aws
       DJANGO_SECRET_KEY: ci-only-secret
-      DB_HOST: localhost
-      DB_PORT: "5432"
-      DB_NAME: emonotate
-      DB_USER: emonotate
-      DB_PASSWORD: postgres
+      DATABASE_URL: postgres://emonotate:postgres@localhost:5432/emonotate
+      APP_BASE: testserver
+      COGNITO_POOL_ID: ci-pool
+      COGNITO_DOMAIN: https://ci.auth.ap-northeast-1.amazoncognito.com
+      COGNITO_CLIENT_ID: ci-client
       AWS_STORAGE_BUCKET_NAME: ci-dummy-bucket
       AWS_REGION: ap-northeast-1
-      RANDOM_USERNAME_NUM: "8"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,9 +73,26 @@ jobs:
       - name: Show submodule commits
         run: git submodule status
 
+      # backend.settings.aws requires TLS, like Neon. Service containers
+      # cannot pass server flags, so start PostgreSQL with SSL here.
+      - name: Start PostgreSQL with TLS
+        run: |
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=emonotate -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=emonotate \
+            postgres:16 \
+            -c ssl=on \
+            -c ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem \
+            -c ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+          for _ in $(seq 1 30); do
+            docker exec postgres pg_isready -U emonotate -h localhost && exit 0
+            sleep 2
+          done
+          docker logs postgres
+          exit 1
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: emonotate-backend/requirements-aws.txt
 
@@ -98,10 +100,22 @@ jobs:
         working-directory: emonotate-backend
         run: |
           python -m pip install --upgrade pip
-          # djangorestframework-simplejwt 5.2 imports pkg_resources.
-          python -m pip install "setuptools<70"
           python -m pip install -r requirements-aws.txt
+
+      - name: Django system check
+        working-directory: emonotate-backend
+        run: python manage.py check
+
+      - name: Check for missing migrations
+        working-directory: emonotate-backend
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Apply migrations to PostgreSQL
+        working-directory: emonotate-backend
+        run: python manage.py migrate --noinput
 
       - name: Test
         working-directory: emonotate-backend
-        run: python manage.py test --noinput
+        run: |
+          python manage.py test users.test.test_cloud_annotation \
+            --settings=backend.settings.test_cloud --noinput
