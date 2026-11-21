@@ -1,0 +1,74 @@
+name: Require linked issue
+
+# Fails a PR to develop/main unless it is tied to a GitHub issue, either:
+#   - the PR links an issue (closing keyword such as "Closes #13" in the body,
+#     or the PR's "Development" sidebar), or
+#   - the head branch is linked to an issue (issue page > Development).
+# Make "Require linked issue / Linked issue" a required status check to block merging.
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  linked-issue:
+    name: Linked issue
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that the PR or its branch is linked to an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_QUERY: |
+            query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $number) {
+                  closingIssuesReferences(first: 20) { nodes { number } }
+                }
+              }
+            }
+          BRANCH_QUERY: |
+            query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) {
+                issues(first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+                  nodes { number linkedBranches(first: 20) { nodes { ref { name } } } }
+                }
+              }
+            }
+        run: |
+          set -euo pipefail
+
+          # 1. Issues linked to the PR itself.
+          pr_issues=$(gh api graphql -f query="$PR_QUERY" \
+            -F owner="$OWNER" -F repo="$REPO" -F number="$PR_NUMBER" \
+            --jq '[.data.repository.pullRequest.closingIssuesReferences.nodes[].number
+                   | "#\(.)"] | join(" ")')
+
+          # 2. Issues whose Development section lists the head branch.
+          branch_issues=$(gh api graphql -f query="$BRANCH_QUERY" \
+            -F owner="$OWNER" -F repo="$REPO" \
+            --jq '[.data.repository.issues.nodes[]
+                   | select([.linkedBranches.nodes[].ref.name] | index(env.HEAD_REF))
+                   | "#\(.number)"] | join(" ")')
+
+          if [[ -n "$pr_issues" || -n "$branch_issues" ]]; then
+            echo "Linked issues: ${pr_issues} ${branch_issues}"
+            exit 0
+          fi
+
+          echo "::error::PR #${PR_NUMBER} (branch '${HEAD_REF}') is not linked to any issue."
+          echo "Link it one of these ways, then edit the PR or re-run this check:"
+          echo "  - Add 'Closes #<issue>' to the PR description"
+          echo "  - Link the issue from the PR's Development sidebar"
+          echo "  - Create the branch from the issue's Development section"
+          exit 1
