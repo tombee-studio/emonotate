@@ -130,6 +130,49 @@ The `commit-msg` hook enforces this format automatically after `make setup`.
 | `commit-msg` | `git commit` | Validates commit message format |
 | `pre-push` | `git push` | Posts a comment to the task management API for each pushed commit |
 
+## Issue 作成から GitHub Release 公開まで
+
+親リポジトリのリリース Issue で製品版を追跡し、変更するサブモジュール（backend・app）の作業 Issue をそこに紐付けます。次の図は両方を変更する場合の運用案です。
+
+図中の子の `main` は本番ブランチ名を統一した後の名称です。現在の子の本番配信は `master` へのマージで起動します。ブランチ移行と Release 自動化の進捗は各 Issue で確認できます。[app #126](https://github.com/tombee-studio/emonotate-app/issues/126) · [backend #139](https://github.com/tombee-studio/emonotate-backend/issues/139) · [親 #19](https://github.com/tombee-studio/emonotate/issues/19)
+
+```mermaid
+flowchart TD
+    I["親にリリース Issue を作成"] --> W["変更対象のリポジトリに作業 Issue を作成し、親 Issue にリンク"]
+
+    subgraph DEV["開発：変更がある側だけ実施"]
+        W --> B1["backend の develop から作業ブランチを作成"]
+        W --> A1["app の develop から作業ブランチを作成"]
+        B1 --> B2["作業 Issue を紐付けて PR を作成"]
+        A1 --> A2["作業 Issue を紐付けて PR を作成"]
+        B2 -->|Django テスト成功| B3["backend の develop にマージ・dev 配信"]
+        A2 -->|React テスト・ビルド成功| A3["app の develop にマージ・dev 配信"]
+    end
+
+    B3 --> P["親の develop でリリース候補の両 SHA を固定"]
+    A3 --> P
+    P --> S{"stg で画面・ログイン・API の結合確認に合格？"}
+    S -->|不合格| F["該当リポジトリで修正・CI 後、候補 SHA を更新"]
+    F --> P
+
+    subgraph PROD["本番配信：両方を変更する場合は backend が先"]
+        S -->|合格| B4["backend のリリース PR を main にマージ"]
+        B4 -->|API 配信・DB 更新成功| BR["backend の GitHub Release を公開"]
+        BR --> A4["app のリリース PR を main にマージ"]
+        A4 -->|UI 配信成功| AR["app の GitHub Release を公開"]
+    end
+
+    AR --> R["親のリリース PR に本番配信済みの両 SHA を記録"]
+    R -->|参照と CI を確認| M["親の main にマージ"]
+    M --> E{"本番で画面・ログイン・API が正常？"}
+    E -->|正常| V["親の main の該当コミットにタグを付け、GitHub Release を公開"]
+    V --> C["親のリリース Issue に Release をリンクして完了"]
+    E -->|異常| H["親 Issue を開いたまま、修正または切り戻し"]
+```
+
+- **片方だけを変更する場合**は、そのサブモジュールだけを配信します。親には、変更した側の配信済みコミット SHA と、もう一方で本番稼働中の SHA を記録します。
+- **親のリリース PR** の本文では `Refs #番号` でリリース Issue を参照します。本番確認に成功し、製品版の GitHub Release を公開したら、その URL を Issue に記録して閉じます。
+
 ## GitHub Actions
 
 | Workflow | Trigger | Behavior |
