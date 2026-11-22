@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       command:
-        description: "plan or apply"
+        description: "plan, apply, or verify the running environment"
         required: true
         type: string
     secrets:
@@ -28,6 +28,7 @@ env:
 
 jobs:
   terraform:
+    if: inputs.command != 'verify'
     name: Terraform ${{ inputs.command }} (${{ inputs.environment }})
     runs-on: ubuntu-latest
     steps:
@@ -111,7 +112,9 @@ jobs:
     name: Verify (${{ inputs.environment }})
     runs-on: ubuntu-latest
     needs: terraform
-    if: inputs.command == 'apply'
+    if: >-
+      !cancelled() && ((inputs.command == 'apply' && needs.terraform.result == 'success') ||
+      (inputs.command == 'verify' && needs.terraform.result == 'skipped'))
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
