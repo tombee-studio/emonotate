@@ -117,5 +117,5 @@ jobs:
       - name: Test
         working-directory: emonotate-backend
         run: |
-          python manage.py test users.test.test_cloud_annotation \
+          python manage.py test users.test \
             --settings=backend.settings.test_cloud --noinput
