@@ -50,8 +50,8 @@ module "iam_oidc" {
   project    = local.project
   github_org = "tombee-studio"
   github_refs = {
-    emonotate-backend = "master"
-    emonotate-app     = "master"
+    emonotate-backend = "main"
+    emonotate-app     = "main"
   }
   ecr_repository_arns          = [module.ecr.repository_arn]
   frontend_bucket_arns         = [module.s3_cloudfront.frontend_bucket_arn]

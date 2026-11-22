@@ -22,7 +22,7 @@ CloudFront が React と Django API を同一オリジンで配信します。Co
 1. Neon で開発用ブランチを選び、TLS 付きのプール接続 URL を用意します。本番には別のブランチまたはプロジェクトを使います。
 2. `ENV=dev bash scripts/setup-secrets.sh` で接続 URL と Django の秘密鍵を登録します。既存環境を移す場合は登録済みの秘密鍵を引き継ぎます。Lambda は起動時に Secrets Manager の `emonotate-dev-django` を取得します。
 3. Terraform 1.7 以上で `terraform -chdir=terraform/environments/dev init`、続いて `plan` を実行し、差分を確認して適用します。初回は既存の `terraform/bootstrap` の状態バケット・ロックテーブルと、ブートストラップイメージを作成する Docker が必要です。旧構成の `db_password`、`django_secret_key`、`cloudfront_domain` の tfvars は不要です。
-4. フロントエンドとバックエンドは Git サブモジュールです。それぞれのリポジトリの `develop` に push すると dev に、`master` に push すると本番に配信されます。バックエンドは Lambda の更新とマイグレーション、フロントエンドは S3・CloudFront への配信を行います。親リポジトリの参照は、配信後に更新してください。本番環境の初回構築では同一リージョンの利用可能なプライベート ECR イメージ URI を `ecr_image_uri` に渡します。
+4. フロントエンドとバックエンドは Git サブモジュールです。それぞれのリポジトリの `develop` に push すると dev に、`main` に push すると本番に配信されます。バックエンドは Lambda の更新とマイグレーション、フロントエンドは S3・CloudFront への配信を行います。親リポジトリの参照は、配信後に更新してください。本番環境の初回構築では同一リージョンの利用可能なプライベート ECR イメージ URI を `ecr_image_uri` に渡します。
 5. `terraform -chdir=terraform/environments/dev output -raw cloudfront_domain` で表示されたホストを HTTPS で開きます。`ENV=dev bash scripts/e2e-verify.sh` でログイン開始時のセッション作成と Cognito へのリダイレクトを確認できます。
 
 YouTube の URL 入力には API キーは不要です。既存の YouTube 検索も使う場合はフロントエンドのビルド時に `REACT_APP_YOUTUBE_API_KEY` を指定します。
@@ -43,7 +43,7 @@ dev と prod の GitHub Actions は、AWS アカウント共通の IAM OIDC プ�
 
 | 出力 | 設定先 | 用途 |
 |---|---|---|
-| `ci_role_arn` | emonotate-app・emonotate-backend の `AWS_CI_ROLE_ARN_DEV` | アプリの配信。dev は両リポジトリの `develop`、本番は `master` から引き受けられます |
+| `ci_role_arn` | emonotate-app・emonotate-backend の `AWS_CI_ROLE_ARN_DEV` | アプリの配信。dev は両リポジトリの `develop`、本番は `main` から引き受けられます |
 | `terraform_plan_role_arn` | このリポジトリの `AWS_TF_PLAN_ROLE_ARN_DEV` | PR での `terraform plan`(読み取り専用) |
 | `terraform_apply_role_arn` | このリポジトリの `AWS_TF_APPLY_ROLE_ARN_DEV` | `develop`(本番は `main`)への push での `terraform apply` |
 
@@ -134,7 +134,7 @@ The `commit-msg` hook enforces this format automatically after `make setup`.
 
 親リポジトリのリリース Issue で製品版を追跡し、変更するサブモジュール（backend・app）の作業 Issue をそこに紐付けます。次の図は両方を変更する場合の運用案です。
 
-図中の子の `main` は本番ブランチ名を統一した後の名称です。現在の子の本番配信は `master` へのマージで起動します。ブランチ移行と Release 自動化の進捗は各 Issue で確認できます。[app #126](https://github.com/tombee-studio/emonotate-app/issues/126) · [backend #139](https://github.com/tombee-studio/emonotate-backend/issues/139) · [親 #19](https://github.com/tombee-studio/emonotate/issues/19)
+本番ブランチは3リポジトリとも `main` です。初回移行では、先に親の本番 Terraform を適用し、子の `main` がデプロイ用 IAM ロールを引き受けられるようにします。その後、子のリリース PR を順にマージします。関連 Issue は次の3件です。[app #126](https://github.com/tombee-studio/emonotate-app/issues/126) · [backend #139](https://github.com/tombee-studio/emonotate-backend/issues/139) · [親 #19](https://github.com/tombee-studio/emonotate/issues/19)
 
 ```mermaid
 flowchart TD
@@ -173,6 +173,8 @@ flowchart TD
 - **片方だけを変更する場合**は、そのサブモジュールだけを配信します。親には、変更した側の配信済みコミット SHA と、もう一方で本番稼働中の SHA を記録します。
 - **親のリリース PR** の本文では `Refs #番号` でリリース Issue を参照します。本番確認に成功し、製品版の GitHub Release を公開したら、その URL を Issue に記録して閉じます。
 
+各リポジトリは本番検証成功後、マージした PR のコミットに `release-pr-<PR番号>` タグを付けて GitHub Release を公開します。親ではインフラに変更がない場合も画面とログイン API を検証し、ノートに両サブモジュールの固定 SHA を記録します。失敗時は対象の Actions 実行から失敗したジョブを再実行できます。
+
 ## GitHub Actions
 
 | Workflow | Trigger | Behavior |
@@ -180,9 +182,9 @@ flowchart TD
 | [test](.github/workflows/test.yml) | PR to `develop`/`main`, called by deploys | React test and build; Django check, migration check, migrate on TLS PostgreSQL, Cognito tests |
 | [require-linked-issue](.github/workflows/require-linked-issue.yml) | PR to `develop`/`main` | Fails unless the PR (`Closes #N` or Development sidebar) or its branch is linked to an issue |
 | [terraform-plan](.github/workflows/terraform-plan.yml) | PR to `develop` / `main` that changes `terraform/` | Runs [terraform](.github/workflows/terraform.yml) `plan` against dev / prd (read-only role) and shows the diff in the job summary |
-| [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | push to `develop` / `main` that changes `terraform/` | Runs [terraform](.github/workflows/terraform.yml) `apply` for dev / prd, then checks the page and Cognito redirect through CloudFront |
+| [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | `develop` infrastructure changes / pushes to `main` | Applies infrastructure changes and verifies CloudFront and Cognito. In production, also verifies releases with no infrastructure changes. |
 
-Infrastructure changes are made in this repository: change `terraform/`, open a PR (plan), and merge (apply). The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy the apps themselves: `develop` to dev and `master` to production, using the `ci_role_arn` role. Both use the same commit rules, hooks and checks as this repository.
+Infrastructure changes are made in this repository: change `terraform/`, open a PR (plan), and merge (apply). The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy the apps themselves: `develop` to dev and `main` to production, using the `ci_role_arn` role. Both use the same commit rules, hooks and checks as this repository.
 | [update-task-status-on-merge](.github/workflows/update-task-status-on-merge.yml) | push to `develop` | Updates the status of each commit's task to merged |
 | [validate-releases-pr](.github/workflows/validate-releases-pr.yml) | PR opened/edited to `releases` | Checks that the PR body contains `Event: <event_id>` |
 | [update-event-status-on-merge-to-releases](.github/workflows/update-event-status-on-merge-to-releases.yml) | PR merged to `releases` | Updates the event status to released |
