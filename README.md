@@ -43,7 +43,7 @@ dev と prod の GitHub Actions は、AWS アカウント共通の IAM OIDC プ�
 
 | 出力 | 設定先 | 用途 |
 |---|---|---|
-| `ci_role_arn` | emonotate-app・emonotate-backend の `AWS_CI_ROLE_ARN_DEV` | アプリの配信。dev は両リポジトリの `develop`、本番は `master` から引き受けられます |
+| `ci_role_arn` | emonotate-app・emonotate-backend の `AWS_CI_ROLE_ARN_DEV` | アプリの配信。dev は両リポジトリの `develop`、本番は `main` から引き受けられます |
 | `terraform_plan_role_arn` | このリポジトリの `AWS_TF_PLAN_ROLE_ARN_DEV` | PR での `terraform plan`(読み取り専用) |
 | `terraform_apply_role_arn` | このリポジトリの `AWS_TF_APPLY_ROLE_ARN_DEV` | `develop`(本番は `main`)への push での `terraform apply` |
 
@@ -184,7 +184,7 @@ flowchart TD
 | [terraform-plan](.github/workflows/terraform-plan.yml) | PR to `develop` / `main` that changes `terraform/` | Runs [terraform](.github/workflows/terraform.yml) `plan` against dev / prd (read-only role) and shows the diff in the job summary |
 | [deploy-dev](.github/workflows/deploy-dev.yml) / [deploy-prd](.github/workflows/deploy-prd.yml) | `develop` infrastructure changes / pushes to `main` | Applies infrastructure changes and verifies CloudFront and Cognito. In production, also verifies releases with no infrastructure changes. |
 
-Infrastructure changes are made in this repository: change `terraform/`, open a PR (plan), and merge (apply). The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy the apps themselves: `develop` to dev and `master` to production, using the `ci_role_arn` role. Both use the same commit rules, hooks and checks as this repository.
+Infrastructure changes are made in this repository: change `terraform/`, open a PR (plan), and merge (apply). The frontend ([emonotate-app](https://github.com/tombee-studio/emonotate-app)) and backend ([emonotate-backend](https://github.com/tombee-studio/emonotate-backend)) deploy the apps themselves: `develop` to dev and `main` to production, using the `ci_role_arn` role. Both use the same commit rules, hooks and checks as this repository.
 | [update-task-status-on-merge](.github/workflows/update-task-status-on-merge.yml) | push to `develop` | Updates the status of each commit's task to merged |
 | [validate-releases-pr](.github/workflows/validate-releases-pr.yml) | PR opened/edited to `releases` | Checks that the PR body contains `Event: <event_id>` |
 | [update-event-status-on-merge-to-releases](.github/workflows/update-event-status-on-merge-to-releases.yml) | PR merged to `releases` | Updates the event status to released |
