@@ -59,7 +59,7 @@ Terraform の変更はこのリポジトリで行います。`terraform/` を変
 
 ### ローカル検証
 
-`emonotate-backend` で `requirements-aws.txt` をインストールし、`python manage.py test users.test.test_cloud_annotation --settings=backend.settings.test_cloud` を実行します。テストは一時 SQLite と Cognito・S3 の模擬応答を使います。画面側のテストは `emonotate-app` で `CI=true npm test -- --runInBand` を実行します。
+`emonotate-backend` で `requirements-aws.txt` をインストールし、`python manage.py test users.test --settings=backend.settings.test_cloud` を実行します。テストは一時 SQLite と Cognito・S3 の模擬応答を使います。画面側のテストは `emonotate-app` で `CI=true npm test -- --runInBand` を実行します。
 
 ## Getting Started
 
