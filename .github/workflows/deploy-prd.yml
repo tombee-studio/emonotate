@@ -1,32 +1,57 @@
 name: Deploy infrastructure to prd
 
-# Runs only when a push to main changes Terraform. The frontend and backend
-# repositories deploy the apps themselves.
-run-name: Terraform apply ${{ github.sha }} to prd
+run-name: Verify production and release ${{ github.sha }}
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "terraform/**"
-      - ".github/workflows/terraform.yml"
-      - ".github/workflows/deploy-prd.yml"
+    branches: [main]
 
 permissions:
   id-token: write
   contents: read
 
-# Never run two applies to the same environment at once; queue them instead.
 concurrency:
   group: terraform-prd
-  cancel-in-progress: false
+  queue: max
 
 jobs:
-  apply:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      command: ${{ steps.diff.outputs.command }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        name: Choose Terraform apply or verification only
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          command=apply
+          if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            if git diff --quiet "$BEFORE" "$GITHUB_SHA" -- terraform/ \
+                .github/workflows/{terraform,deploy-prd}.yml; then
+              command=verify
+            else
+              result=$?
+              [[ $result == 1 ]] || exit "$result"
+            fi
+          fi
+          echo "command=$command" >> "$GITHUB_OUTPUT"
+
+  production:
+    needs: changes
     uses: ./.github/workflows/terraform.yml
     with:
       environment: prd
-      command: apply
+      command: ${{ needs.changes.outputs.command }}
     secrets:
       aws_role_arn: ${{ secrets.AWS_TF_APPLY_ROLE_ARN_PRD }}
+
+  release:
+    needs: production
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: ./.github/workflows/release.yml
