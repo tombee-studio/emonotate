@@ -1,9 +1,8 @@
 name: Publish GitHub Release
 
-# Records merged source. Production deployment runs independently on infra changes.
+# Called after the production workflow verifies this revision.
 on:
-  push:
-    branches: [main]
+  workflow_call:
 
 permissions:
   contents: write
@@ -15,7 +14,7 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ !github.event.created && !github.event.deleted && !github.event.forced }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !github.event.created && !github.event.deleted && !github.event.forced }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish the merged PR
@@ -62,5 +61,6 @@ jobs:
               notes.push(`- ${path}: [\`${entry.sha}\`](${entry.html_url})`);
             }
             await github.rest.repos.createRelease({
-              ...repo, tag_name: tag, target_commitish: sha, name: tag, body: notes.join("\n")
+              ...repo, tag_name: tag, target_commitish: sha, name: tag, body: notes.join("\n"),
+              generate_release_notes: true
             });
