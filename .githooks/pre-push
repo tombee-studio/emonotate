@@ -1,0 +1,41 @@
+#!/bin/bash
+# Runs before `git push`. For each commit being pushed, reads "Task: <id>"
+# from the commit message and posts a comment to the task management API.
+
+: "${TOOL_API_URL:?TOOL_API_URL is not set}"
+: "${TOOL_API_KEY:?TOOL_API_KEY is not set}"
+: "${TOOL_USER_ID:?TOOL_USER_ID is not set}"
+
+zero_sha="0000000000000000000000000000000000000000"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Skip branch deletions
+    [[ "$local_sha" == "$zero_sha" ]] && continue
+
+    if [[ "$remote_sha" == "$zero_sha" ]]; then
+        # New remote branch: collect commits not yet on any remote
+        commits=$(git rev-list "$local_sha" --not --remotes)
+    else
+        commits=$(git rev-list "$remote_sha..$local_sha")
+    fi
+
+    for commit in $commits; do
+        task_id=$(git log -1 --format="%B" "$commit" \
+            | sed -n 's/^Task: \([0-9][0-9]*\)$/\1/p')
+        [[ -z "$task_id" ]] && continue
+
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "$TOOL_API_URL/task_app/comments/" \
+            -H "X-API-Key: $TOOL_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"author\": $TOOL_USER_ID, \"task\": $task_id, \"description\": \"commit: $commit\"}")
+
+        if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+            echo "pre-push: linked $commit -> Task $task_id"
+        else
+            echo "pre-push: WARNING: failed to link $commit -> Task $task_id (HTTP $http_code)" >&2
+        fi
+    done
+done
+
+exit 0

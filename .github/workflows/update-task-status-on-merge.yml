@@ -1,0 +1,38 @@
+name: Update task status on merge to develop
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  update-task-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark merged commits in task tool
+        env:
+          COMMITS: ${{ toJson(github.event.commits) }}
+          TOOL_API_KEY: ${{ secrets.TOOL_API_KEY }}
+          TOOL_TASK_API_URL: ${{ secrets.TOOL_TASK_API_URL }}
+          TASK_STATUS_MERGE_ID: ${{ secrets.TASK_STATUS_MERGE_ID }}
+        run: |
+          echo "$COMMITS" | jq -c '.[]' | while IFS= read -r commit; do
+            message=$(echo "$commit" | jq -r '.message')
+            sha=$(echo "$commit" | jq -r '.id')
+            task_id=$(echo "$message" | sed -n 's/^Task: \([0-9][0-9]*\)$/\1/p' | head -1)
+
+            [[ -z "$task_id" ]] && continue
+
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PATCH "${TOOL_TASK_API_URL}${task_id}/" \
+              -H "X-API-Key: $TOOL_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"status\": $TASK_STATUS_MERGE_ID}")
+
+            if [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
+              echo "Task $task_id: status updated to merged (commit ${sha})"
+            else
+              echo "::error::Failed to update Task $task_id status (HTTP $http_code, commit ${sha})"
+              exit 1
+            fi
+          done

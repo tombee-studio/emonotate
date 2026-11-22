@@ -1,0 +1,176 @@
+name: Terraform (reusable)
+
+# plan : init, validate and plan (read-only role, no state lock). Used on PRs.
+# apply: init, validate, plan, apply that plan, then check the environment.
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Directory under terraform/environments (dev or prd)"
+        required: true
+        type: string
+      command:
+        description: "plan, apply, or verify the running environment"
+        required: true
+        type: string
+    secrets:
+      aws_role_arn:
+        description: "IAM role for Terraform (plan or apply role of the environment)"
+        required: true
+
+env:
+  AWS_REGION: ap-northeast-1
+  PROJECT: emonotate
+  ENV: ${{ inputs.environment }}
+  TF_DIR: terraform/environments/${{ inputs.environment }}
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  terraform:
+    if: inputs.command != 'verify'
+    name: Terraform ${{ inputs.command }} (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check role secret
+        env:
+          ROLE: ${{ secrets.aws_role_arn }}
+        run: |
+          if [[ -z "$ROLE" ]]; then
+            echo "::error::The Terraform ${{ inputs.command }} role ARN secret for ${ENV} is not set."
+            echo "Apply terraform/environments/${ENV} once by hand, then set the"
+            echo "terraform_${{ inputs.command }}_role_arn output as the repository secret."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.2"
+          terraform_wrapper: false
+
+      # Environments other than dev take the Lambda image as a variable. Terraform
+      # ignores image changes, so pass the image that is running now.
+      - name: Read current Lambda image
+        if: inputs.environment != 'dev'
+        run: |
+          image=$(aws lambda get-function --function-name "${PROJECT}-${ENV}-backend" \
+            --query Code.ImageUri --output text)
+          echo "TF_VAR_ecr_image_uri=${image}" >> "$GITHUB_ENV"
+
+      - name: Init
+        run: terraform -chdir="$TF_DIR" init
+
+      - name: Validate
+        run: terraform -chdir="$TF_DIR" validate
+
+      - name: Plan
+        id: plan
+        env:
+          LOCK: ${{ inputs.command == 'apply' }}
+        run: |
+          set +e
+          terraform -chdir="$TF_DIR" plan -lock="$LOCK" -detailed-exitcode -no-color \
+            -out=tfplan > plan.txt 2>&1
+          code=$?
+          set -e
+          cat plan.txt
+          # 0: no changes, 2: changes, anything else: error
+          if [[ $code -ne 0 && $code -ne 2 ]]; then
+            exit "$code"
+          fi
+          echo "changes=$([[ $code -eq 2 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Write plan summary
+        if: always() && steps.plan.outcome != 'skipped'
+        run: |
+          {
+            echo "### Terraform ${{ inputs.command }}: ${ENV}"
+            echo ""
+            echo "Commit \`${GITHUB_SHA}\`"
+            echo ""
+            echo '<details><summary>Plan</summary>'
+            echo ""
+            echo '```'
+            tail -c 60000 plan.txt 2>/dev/null || true
+            echo '```'
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply
+        if: inputs.command == 'apply' && steps.plan.outputs.changes == 'true'
+        run: terraform -chdir="$TF_DIR" apply -auto-approve tfplan
+
+  verify:
+    name: Verify (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: terraform
+    if: >-
+      !cancelled() && ((inputs.command == 'apply' && needs.terraform.result == 'success') ||
+      (inputs.command == 'verify' && needs.terraform.result == 'skipped'))
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.aws_role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check page and Cognito redirect through CloudFront
+        id: verify
+        run: |
+          DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='${PROJECT}-${ENV}-frontend-cf'].DomainName" \
+            --output text)
+          if [[ -z "$DOMAIN" || "$DOMAIN" == "None" ]]; then
+            echo "::error::CloudFront distribution ${PROJECT}-${ENV}-frontend-cf not found"
+            exit 1
+          fi
+          echo "url=https://${DOMAIN}/" >> "$GITHUB_OUTPUT"
+
+          # CloudFront changes may take a while to roll out, so retry.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent --show-error --max-time 20 "https://${DOMAIN}/" \
+                | grep -q 'id="root"'; then
+              echo "Page OK: https://${DOMAIN}/"
+              page_ok=1
+              break
+            fi
+            echo "Page not ready (attempt ${attempt}), retrying..."
+            sleep 15
+          done
+          if [[ -z "${page_ok:-}" ]]; then
+            echo "::error::https://${DOMAIN}/ did not serve the React app"
+            exit 1
+          fi
+
+          location=$(curl --fail --silent --show-error --max-time 20 \
+            --output /dev/null --write-out '%{redirect_url}' \
+            "https://${DOMAIN}/api/cognito/login/")
+          if [[ "$location" != https://*.amazoncognito.com/oauth2/authorize\?* ]]; then
+            echo "::error::Login did not redirect to Cognito (got: '${location}')"
+            exit 1
+          fi
+          echo "Cognito redirect OK"
+
+      - name: Write verification summary
+        if: always()
+        env:
+          URL: ${{ steps.verify.outputs.url }}
+          RESULT: ${{ steps.verify.outcome }}
+        run: |
+          {
+            echo "### Verify ${ENV}"
+            echo ""
+            echo "| Item | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| URL | ${URL:-unknown} |"
+            echo "| Verification | ${RESULT} |"
+          } >> "$GITHUB_STEP_SUMMARY"

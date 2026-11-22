@@ -1,0 +1,40 @@
+name: Terraform plan
+
+# Shows the infrastructure diff on PRs that change Terraform.
+# PRs to develop are planned against dev, PRs to main against prd.
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan-dev:
+    if: github.base_ref == 'develop'
+    uses: ./.github/workflows/terraform.yml
+    with:
+      environment: dev
+      command: plan
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_TF_PLAN_ROLE_ARN_DEV }}
+
+  plan-prd:
+    if: github.base_ref == 'main'
+    uses: ./.github/workflows/terraform.yml
+    with:
+      environment: prd
+      command: plan
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_TF_PLAN_ROLE_ARN_PRD }}

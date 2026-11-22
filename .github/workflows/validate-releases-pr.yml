@@ -1,0 +1,30 @@
+name: Validate releases PR
+
+on:
+  pull_request:
+    branches:
+      - releases
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  check-event-id:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR body contains Event ID
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          event_id=$(echo "$PR_BODY" \
+            | grep -o 'Event: [0-9][0-9]*' \
+            | grep -o '[0-9][0-9]*' \
+            | head -1)
+
+          if [[ -z "$event_id" ]]; then
+            echo "::error::PR body must contain 'Event: <event_id>'"
+            echo ""
+            echo "Add the following line to your PR body:"
+            echo "  Event: <event_id>"
+            exit 1
+          fi
+
+          echo "Event ID: $event_id"

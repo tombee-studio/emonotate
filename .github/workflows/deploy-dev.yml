@@ -1,0 +1,32 @@
+name: Deploy infrastructure to dev
+
+# Runs only when a push to develop changes Terraform. The frontend and backend
+# repositories deploy the apps themselves.
+run-name: Terraform apply ${{ github.sha }} to dev
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+      - ".github/workflows/deploy-dev.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two applies to the same environment at once; queue them instead.
+concurrency:
+  group: terraform-dev
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    uses: ./.github/workflows/terraform.yml
+    with:
+      environment: dev
+      command: apply
+    secrets:
+      aws_role_arn: ${{ secrets.AWS_TF_APPLY_ROLE_ARN_DEV }}
